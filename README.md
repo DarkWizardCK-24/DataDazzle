@@ -1,2 +1,16 @@
-# Data-Registration
-A mobile app built using flutter-dart for UI and SQLite for database. It can create and import and export data in the form of CSVs, XLSXs and ODSs. Along with it, it also has Tabular and UI cards oriented data representation.
+# data_registration
+
+A new Flutter project.
+
+## Getting Started
+
+This project is a starting point for a Flutter application.
+
+A few resources to get you started if this is your first Flutter project:
+
+- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
+- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+
+For help getting started with Flutter development, view the
+[online documentation](https://docs.flutter.dev/), which offers tutorials,
+samples, guidance on mobile development, and a full API reference.
