@@ -1,23 +1,36 @@
-# 📊 DataDazzle 
-Welcome to DataDazzle, a vibrant Flutter-Dart mobile app designed for seamless data management! Powered by SQLite for robust local storage, it supports creating, importing, and exporting data in CSV, XLSX, and ODS formats. Visualize your data beautifully with tabular views and UI card-based representations for an intuitive experience across devices. ✨
+# DataDazzle
 
+A Flutter mobile app for building your own data tables and moving data in and out of them. Define a table, add rows, and import or export as CSV, XLSX or ODS. Everything is stored locally in SQLite.
 
-# ✨ Features
+## Features
 
-1. 🗄️ SQLite Database: Efficient local storage for all your data needs.
-2. 📥 Import/Export: Supports CSV, XLSX, and ODS file formats for easy data transfer.
-3. 📋 Tabular View: Organized, spreadsheet-style data presentation.
-4. 🃏 Card-Based UI: Modern, visually appealing data display in card format.
-5. 📱 Responsive Design: Smooth and adaptive UI for all mobile devices.
+- **Custom tables**: create tables with your own fields, then edit or remove them.
+- **Dynamic forms**: add and edit rows through forms generated from the table definition.
+- **Two views**: spreadsheet-style table view and card-based view.
+- **Import and export**: CSV, XLSX and ODS files.
+- **Local storage**: data lives in an on-device SQLite database, no account needed.
 
+## Tech stack
 
+- Flutter and Dart
+- `sqflite` for the local database
+- `csv`, `excel` and `file_picker` for import and export, `path_provider` and `open_file` for saved files
 
-# 🛠️ Tech Stack
+## Project structure
 
-1. Flutter & Dart: Cross-platform UI framework for mobile.
-2. SQLite: Lightweight, local database for data storage.
-3. File Handling: Support for CSV, XLSX, and ODS import/export.
-4. UI Components: Tabular grids and card-based data visualization.
+```
+lib/
+  models/     table_definition, item, dynamic_item
+  services/   database_helper.dart (SQLite), file_handler.dart (import/export)
+  screens/    home, table manager, table form, table data
+  widgets/    dynamic_item_card, dynamic_item_form, dynamic_item_table
+```
 
+## Getting started
 
-Built with 🌟 by DarkWizardCK
+```bash
+flutter pub get
+flutter run
+```
+
+Requires Flutter with Dart SDK 3.8 or newer.
