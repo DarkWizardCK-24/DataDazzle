@@ -1,12 +1,13 @@
 import 'package:data_registration/models/dynamic_item.dart';
 import 'package:data_registration/models/table_definition.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'data_store.dart';
 
-class DatabaseHelper {
+class DatabaseHelper implements DataStore {
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
 
@@ -18,12 +19,24 @@ class DatabaseHelper {
     return _database!;
   }
 
+  /// Bump this and append a step to [_migrations] to change the schema.
+  /// `_migrations[n]` upgrades a database from version n+1 to n+2.
+  static const int _schemaVersion = 1;
+  static final List<Future<void> Function(Database db)> _migrations = [];
+
+  static Future<void> _onUpgrade(Database db, int from, int to) async {
+    for (var v = from - 1; v < to - 1; v++) {
+      await _migrations[v](db);
+    }
+  }
+
   Future<Database> _initDB(String filePath) async {
     final directory = await getApplicationDocumentsDirectory();
-    final path = join(directory.path, filePath);
+    final path = p.join(directory.path, filePath);
     return await openDatabase(
       path,
-      version: 1,
+      version: _schemaVersion,
+      onUpgrade: _onUpgrade,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE tables (
@@ -46,31 +59,31 @@ class DatabaseHelper {
 
   Future<String> _getImageStoragePath(int tableId) async {
     final directory = await getApplicationDocumentsDirectory();
-    final imagePath = join(directory.path, 'images', tableId.toString());
+    final imagePath = p.join(directory.path, 'images', tableId.toString());
     await Directory(imagePath).create(recursive: true);
     return imagePath;
   }
 
+  @override
   Future<String> saveImageFile(int tableId, File imageFile) async {
     final imagePath = await _getImageStoragePath(tableId);
-    final fileName = '${DateTime.now().millisecondsSinceEpoch}_${imageFile.path.split('/').last}';
-    final newPath = join(imagePath, fileName);
+    final fileName =
+        '${DateTime.now().millisecondsSinceEpoch}_${p.basename(imageFile.path)}';
+    final newPath = p.join(imagePath, fileName);
     await imageFile.copy(newPath);
     return newPath;
   }
 
+  @override
   Future<void> createTable(TableDefinition table) async {
     final db = await database;
-    await db.insert(
-      'tables',
-      {
-        'name': table.name,
-        'fields': jsonEncode(table.fields.map((f) => f.toMap()).toList()),
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('tables', {
+      'name': table.name,
+      'fields': jsonEncode(table.fields.map((f) => f.toMap()).toList()),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  @override
   Future<void> updateTable(TableDefinition table) async {
     final db = await database;
     // Update table metadata
@@ -92,40 +105,37 @@ class DatabaseHelper {
       // Add default values for new fields
       for (var field in table.fields) {
         if (!updatedFields.containsKey(field.name)) {
-          updatedFields[field.name] = field.isList || field.subfields != null ? [] : '';
+          final d = field.defaultValue;
+          updatedFields[field.name] = field.isList || field.subfields != null
+              ? []
+              : (field.supportsRules && d != null && d.isNotEmpty)
+              ? (field.type == 'integer' ? (int.tryParse(d) ?? d) : d)
+              : '';
         }
       }
-      await updateItem(DynamicItem(
-        id: item.id,
-        tableId: item.tableId,
-        fields: updatedFields,
-      ));
+      await updateItem(
+        DynamicItem(id: item.id, tableId: item.tableId, fields: updatedFields),
+      );
     }
   }
 
+  @override
   Future<void> deleteTable(int tableId) async {
     final db = await database;
     // Delete items
-    await db.delete(
-      'items',
-      where: 'tableId = ?',
-      whereArgs: [tableId],
-    );
+    await db.delete('items', where: 'tableId = ?', whereArgs: [tableId]);
     // Delete table
-    await db.delete(
-      'tables',
-      where: 'id = ?',
-      whereArgs: [tableId],
-    );
+    await db.delete('tables', where: 'id = ?', whereArgs: [tableId]);
     // Delete associated image directory
     final directory = await getApplicationDocumentsDirectory();
-    final imagePath = join(directory.path, 'images', tableId.toString());
+    final imagePath = p.join(directory.path, 'images', tableId.toString());
     final imageDir = Directory(imagePath);
     if (await imageDir.exists()) {
       await imageDir.delete(recursive: true);
     }
   }
 
+  @override
   Future<List<TableDefinition>> getTables() async {
     final db = await database;
     final maps = await db.query('tables');
@@ -140,6 +150,7 @@ class DatabaseHelper {
     });
   }
 
+  @override
   Future<List<DynamicItem>> getItems(int tableId) async {
     final db = await database;
     final maps = await db.query(
@@ -147,44 +158,65 @@ class DatabaseHelper {
       where: 'tableId = ?',
       whereArgs: [tableId],
     );
-    return List.generate(maps.length, (i) => DynamicItem.fromMap({
-          'id': maps[i]['id'],
-          'tableId': maps[i]['tableId'],
-          'fields': jsonDecode(maps[i]['fields'].toString()),
-        }));
-  }
-
-  Future<void> insertItem(DynamicItem item) async {
-    final db = await database;
-    await db.insert(
-      'items',
-      {
-        'tableId': item.tableId,
-        'fields': jsonEncode(item.fields),
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
+    return List.generate(
+      maps.length,
+      (i) => DynamicItem.fromMap({
+        'id': maps[i]['id'],
+        'tableId': maps[i]['tableId'],
+        'fields': jsonDecode(maps[i]['fields'].toString()),
+      }),
     );
   }
 
+  @override
+  Future<void> insertItem(DynamicItem item) async {
+    final db = await database;
+    await db.insert('items', {
+      'tableId': item.tableId,
+      'fields': jsonEncode(item.fields),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  @override
   Future<void> updateItem(DynamicItem item) async {
     final db = await database;
     await db.update(
       'items',
-      {
-        'tableId': item.tableId,
-        'fields': jsonEncode(item.fields),
-      },
+      {'tableId': item.tableId, 'fields': jsonEncode(item.fields)},
       where: 'id = ?',
       whereArgs: [item.id],
     );
   }
 
+  @override
+  Future<void> deleteItems(List<int> ids) async {
+    if (ids.isEmpty) return;
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final id in ids) {
+        await txn.delete('items', where: 'id = ?', whereArgs: [id]);
+      }
+    });
+  }
+
+  @override
+  Future<void> restoreItems(List<DynamicItem> items) async {
+    if (items.isEmpty) return;
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final item in items) {
+        await txn.insert('items', {
+          'id': item.id,
+          'tableId': item.tableId,
+          'fields': jsonEncode(item.fields),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  @override
   Future<void> deleteItem(int id) async {
     final db = await database;
-    await db.delete(
-      'items',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    await db.delete('items', where: 'id = ?', whereArgs: [id]);
   }
 }

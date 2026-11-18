@@ -3,7 +3,8 @@ import 'package:data_registration/models/table_definition.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:data_registration/services/database_helper.dart';
+import 'package:data_registration/services/data_store.dart';
+import 'package:data_registration/services/field_validator.dart';
 import 'dart:io';
 
 class DynamicItemForm extends StatefulWidget {
@@ -11,11 +12,15 @@ class DynamicItemForm extends StatefulWidget {
   final DynamicItem? item;
   final Function(DynamicItem) onSubmit;
 
+  /// Rows already in the table, used to enforce `unique` fields.
+  final List<DynamicItem> existingItems;
+
   const DynamicItemForm({
     super.key,
     required this.table,
     this.item,
     required this.onSubmit,
+    this.existingItems = const [],
   });
 
   @override
@@ -35,16 +40,68 @@ class _DynamicItemFormState extends State<DynamicItemForm> {
     } else {
       for (var field in widget.table.fields) {
         _fields[field.name] = field.isList || field.subfields != null ? [] : '';
+        final d = field.defaultValue;
+        if (field.supportsRules && d != null && d.isNotEmpty) {
+          _fields[field.name] = field.type == 'integer'
+              ? (int.tryParse(d) ?? d)
+              : d;
+        }
       }
     }
   }
 
-  Future<void> _pickFile(String fieldName, String type, {bool isList = false}) async {
+  /// Validates one value against its field's rules (required, min/max,
+  /// pattern, unique against the other rows).
+  String? _check(FieldDefinition field, dynamic value) {
+    return FieldValidator.validate(
+      field,
+      value,
+      others: field.unique
+          ? widget.existingItems
+                .where((i) => i.id == null || i.id != widget.item?.id)
+                .map((i) => i.fields[field.name])
+          : const [],
+    );
+  }
+
+  void _submit() {
+    final formOk = _formKey.currentState!.validate();
+    // Fields without a text box (lists, files, dates) are checked directly.
+    final errors = FieldValidator.validateItem(
+      widget.table,
+      _fields,
+      widget.existingItems,
+      ignoreId: widget.item?.id,
+    );
+    if (!formOk || errors.isNotEmpty) {
+      final msg = errors.values.isNotEmpty
+          ? errors.values.first
+          : 'Please fix the highlighted fields';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      return;
+    }
+    widget.onSubmit(
+      DynamicItem(
+        id: widget.item?.id,
+        tableId: widget.table.id!,
+        fields: _fields,
+      ),
+    );
+    Navigator.pop(context);
+  }
+
+  Future<void> _pickFile(
+    String fieldName,
+    String type, {
+    bool isList = false,
+  }) async {
     if (type == 'image') {
       final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
       if (image != null) {
-        final imagePath = await DatabaseHelper.instance.saveImageFile(
-            widget.table.id!, File(image.path));
+        final imagePath = await dataStore.saveImageFile(
+          widget.table.id!,
+          File(image.path),
+        );
         setState(() {
           if (isList) {
             _fields[fieldName] = [...(_fields[fieldName] ?? []), imagePath];
@@ -53,21 +110,27 @@ class _DynamicItemFormState extends State<DynamicItemForm> {
           }
         });
       }
-    } else if (type == 'audio' || type == 'video' || type == 'excel' || type == 'pdf') {
+    } else if (type == 'audio' ||
+        type == 'video' ||
+        type == 'excel' ||
+        type == 'pdf') {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: type == 'audio'
             ? ['mp3', 'wav']
             : type == 'video'
-                ? ['mp4', 'mov']
-                : type == 'excel'
-                    ? ['xlsx']
-                    : ['pdf'],
+            ? ['mp4', 'mov']
+            : type == 'excel'
+            ? ['xlsx']
+            : ['pdf'],
       );
       if (result != null) {
         setState(() {
           if (isList) {
-            _fields[fieldName] = [...(_fields[fieldName] ?? []), result.files.single.path!];
+            _fields[fieldName] = [
+              ...(_fields[fieldName] ?? []),
+              result.files.single.path!,
+            ];
           } else {
             _fields[fieldName] = result.files.single.path!;
           }
@@ -81,29 +144,37 @@ class _DynamicItemFormState extends State<DynamicItemForm> {
       // Handle list fields or fields with subfields
       List<dynamic> currentValues = _fields[field.name] ?? [];
       final isSubfield = field.subfields != null;
-      final maxEntries = isSubfield ? field.subfields!.length : 10; // Arbitrary max for lists
-      final minEntries = isSubfield ? field.subfields!.length : 0;
+      final maxEntries = isSubfield
+          ? field.subfields!.length
+          : 10; // Arbitrary max for lists
 
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             field.name,
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
           ),
+          const SizedBox(height: 10),
           ...List.generate(
             isSubfield ? field.subfields!.length : currentValues.length + 1,
             (index) {
               if (index >= maxEntries) return Container();
               final controller = TextEditingController(
-                text: index < currentValues.length ? currentValues[index].toString() : '',
+                text: index < currentValues.length
+                    ? currentValues[index].toString()
+                    : '',
               );
               return Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Row(
                   children: [
                     Expanded(
-                      child: field.type == 'image' ||
+                      child:
+                          field.type == 'image' ||
                               field.type == 'audio' ||
                               field.type == 'video' ||
                               field.type == 'excel' ||
@@ -111,8 +182,8 @@ class _DynamicItemFormState extends State<DynamicItemForm> {
                           ? Text(
                               index < currentValues.length
                                   ? currentValues[index].isEmpty
-                                      ? 'No file selected'
-                                      : '${field.type} selected'
+                                        ? 'No file selected'
+                                        : '${field.type} selected'
                                   : 'No file selected',
                               style: const TextStyle(color: Colors.white70),
                               overflow: TextOverflow.ellipsis,
@@ -120,8 +191,12 @@ class _DynamicItemFormState extends State<DynamicItemForm> {
                           : TextFormField(
                               controller: controller,
                               decoration: InputDecoration(
-                                labelText: isSubfield ? field.subfields![index] : 'Entry ${index + 1}',
-                                labelStyle: const TextStyle(color: Colors.white),
+                                labelText: isSubfield
+                                    ? field.subfields![index]
+                                    : 'Entry ${index + 1}',
+                                labelStyle: const TextStyle(
+                                  color: Colors.white,
+                                ),
                                 enabledBorder: const OutlineInputBorder(
                                   borderSide: BorderSide(color: Colors.white70),
                                 ),
@@ -148,7 +223,8 @@ class _DynamicItemFormState extends State<DynamicItemForm> {
                         field.type == 'excel' ||
                         field.type == 'pdf')
                       ElevatedButton(
-                        onPressed: () => _pickFile(field.name, field.type, isList: true),
+                        onPressed: () =>
+                            _pickFile(field.name, field.type, isList: true),
                         style: ElevatedButton.styleFrom(
                           foregroundColor: Colors.white,
                           backgroundColor: Colors.grey[800],
@@ -194,7 +270,7 @@ class _DynamicItemFormState extends State<DynamicItemForm> {
         return TextFormField(
           initialValue: _fields[field.name]?.toString() ?? '',
           decoration: InputDecoration(
-            labelText: field.name,
+            labelText: field.required ? '${field.name} *' : field.name,
             labelStyle: const TextStyle(color: Colors.white),
             enabledBorder: const OutlineInputBorder(
               borderSide: BorderSide(color: Colors.white70),
@@ -205,13 +281,15 @@ class _DynamicItemFormState extends State<DynamicItemForm> {
           ),
           style: const TextStyle(color: Colors.white),
           keyboardType: TextInputType.number,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
+          validator: (v) => _check(field, v),
           onChanged: (value) => _fields[field.name] = int.tryParse(value) ?? '',
         );
       case 'email':
         return TextFormField(
           initialValue: _fields[field.name]?.toString() ?? '',
           decoration: InputDecoration(
-            labelText: field.name,
+            labelText: field.required ? '${field.name} *' : field.name,
             labelStyle: const TextStyle(color: Colors.white),
             enabledBorder: const OutlineInputBorder(
               borderSide: BorderSide(color: Colors.white70),
@@ -222,13 +300,19 @@ class _DynamicItemFormState extends State<DynamicItemForm> {
           ),
           style: const TextStyle(color: Colors.white),
           keyboardType: TextInputType.emailAddress,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
+          validator: (v) => _check(field, v),
           onChanged: (value) => _fields[field.name] = value,
         );
       case 'date':
         return TextFormField(
-          initialValue: _fields[field.name]?.toString() ?? '',
+          key: ValueKey('${field.name}-${_fields[field.name]}'),
+          initialValue: (_fields[field.name]?.toString() ?? '')
+              .split('T')
+              .first,
+          validator: (_) => _check(field, _fields[field.name]),
           decoration: InputDecoration(
-            labelText: field.name,
+            labelText: field.required ? '${field.name} *' : field.name,
             labelStyle: const TextStyle(color: Colors.white),
             enabledBorder: const OutlineInputBorder(
               borderSide: BorderSide(color: Colors.white70),
@@ -239,15 +323,20 @@ class _DynamicItemFormState extends State<DynamicItemForm> {
           ),
           style: const TextStyle(color: Colors.white),
           onTap: () async {
-            DateTime? picked = await showDatePicker(
+            final current = DateTime.tryParse(
+              _fields[field.name]?.toString() ?? '',
+            );
+            final picked = await showDatePicker(
               context: context,
-              initialDate: DateTime.now(),
-              firstDate: DateTime(2000),
+              initialDate: current ?? DateTime.now(),
+              firstDate: DateTime(1900),
               lastDate: DateTime(2100),
             );
             if (picked != null) {
+              final mm = picked.month.toString().padLeft(2, '0');
+              final dd = picked.day.toString().padLeft(2, '0');
               setState(() {
-                _fields[field.name] = picked.toIso8601String();
+                _fields[field.name] = '${picked.year}-$mm-$dd';
               });
             }
           },
@@ -262,7 +351,9 @@ class _DynamicItemFormState extends State<DynamicItemForm> {
           children: [
             Expanded(
               child: Text(
-                _fields[field.name].isEmpty ? 'No file selected' : '${field.type} selected',
+                _fields[field.name].isEmpty
+                    ? 'No file selected'
+                    : '${field.type} selected',
                 style: const TextStyle(color: Colors.white70),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -281,7 +372,7 @@ class _DynamicItemFormState extends State<DynamicItemForm> {
         return TextFormField(
           initialValue: _fields[field.name]?.toString() ?? '',
           decoration: InputDecoration(
-            labelText: field.name,
+            labelText: field.required ? '${field.name} *' : field.name,
             labelStyle: const TextStyle(color: Colors.white),
             enabledBorder: const OutlineInputBorder(
               borderSide: BorderSide(color: Colors.white70),
@@ -291,6 +382,8 @@ class _DynamicItemFormState extends State<DynamicItemForm> {
             ),
           ),
           style: const TextStyle(color: Colors.white),
+          autovalidateMode: AutovalidateMode.onUserInteraction,
+          validator: (v) => _check(field, v),
           onChanged: (value) => _fields[field.name] = value,
         );
     }
@@ -321,19 +414,14 @@ class _DynamicItemFormState extends State<DynamicItemForm> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              ...widget.table.fields.map((field) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: _buildFieldInput(field),
-                  )),
+              ...widget.table.fields.map(
+                (field) => Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _buildFieldInput(field),
+                ),
+              ),
               ElevatedButton(
-                onPressed: () {
-                  widget.onSubmit(DynamicItem(
-                    id: widget.item?.id,
-                    tableId: widget.table.id!,
-                    fields: _fields,
-                  ));
-                  Navigator.pop(context);
-                },
+                onPressed: _submit,
                 style: ElevatedButton.styleFrom(
                   foregroundColor: Colors.white,
                   backgroundColor: Colors.grey[800],

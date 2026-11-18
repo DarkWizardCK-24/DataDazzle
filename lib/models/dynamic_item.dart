@@ -6,11 +6,7 @@ class DynamicItem {
   DynamicItem({this.id, required this.tableId, required this.fields});
 
   Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'tableId': tableId,
-      'fields': fields,
-    };
+    return {'id': id, 'tableId': tableId, 'fields': fields};
   }
 
   static DynamicItem fromMap(Map<String, dynamic> map) {

@@ -1,30 +1,36 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:data_registration/demo/demo_data_store.dart';
 import 'package:data_registration/main.dart';
+import 'package:data_registration/utils/responsive.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('Home screen renders on phone and desktop widths', (
+    tester,
+  ) async {
+    for (final size in const [Size(320, 640), Size(1920, 1080)]) {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      await tester.pumpWidget(const MyApp());
+      await tester.pumpAndSettle();
+      expect(find.text('Manage Tables'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    }
+    tester.view.reset();
+  });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+  test('breakpoints', () {
+    expect(screenSizeForWidth(390), ScreenSize.compact);
+    expect(screenSizeForWidth(820), ScreenSize.medium);
+    expect(screenSizeForWidth(1440), ScreenSize.expanded);
+    expect(gridColumnsForWidth(390), 1);
+    expect(gridColumnsForWidth(1200), 3);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  test('demo store is seeded', () async {
+    final tables = await DemoDataStore.instance.getTables();
+    expect(tables.length, 4);
+    expect(await DemoDataStore.instance.getItems(tables.first.id!), isNotEmpty);
   });
 }

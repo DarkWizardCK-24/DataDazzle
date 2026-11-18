@@ -9,12 +9,30 @@ class DynamicItemTable extends StatelessWidget {
   final Function(DynamicItem) onEdit;
   final Function(int) onDelete;
 
+  /// Field currently sorted by (null = unsorted) and direction.
+  final String? sortField;
+  final bool sortAscending;
+
+  /// Called with the field name when a column header is tapped.
+  final void Function(String field)? onSort;
+
+  /// Multi-select. Checkboxes appear once [selectionMode] is true.
+  final bool selectionMode;
+  final Set<int> selectedIds;
+  final void Function(DynamicItem item)? onToggleSelect;
+
   const DynamicItemTable({
     super.key,
     required this.table,
     required this.items,
     required this.onEdit,
     required this.onDelete,
+    this.sortField,
+    this.sortAscending = true,
+    this.onSort,
+    this.selectionMode = false,
+    this.selectedIds = const {},
+    this.onToggleSelect,
   });
 
   Widget _buildCell(FieldDefinition field, dynamic value) {
@@ -30,10 +48,8 @@ class DynamicItemTable extends StatelessWidget {
               height: 50,
               width: 50,
               fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) => const Text(
-                'Image N/A',
-                style: TextStyle(color: Colors.red),
-              ),
+              errorBuilder: (context, error, stackTrace) =>
+                  const Text('Image N/A', style: TextStyle(color: Colors.red)),
             ),
           );
         } else {
@@ -48,7 +64,9 @@ class DynamicItemTable extends StatelessWidget {
           style: TextStyle(color: Colors.white),
         );
       }
-    } else if ((field.isList || field.subfields != null) && value != null && value is List) {
+    } else if ((field.isList || field.subfields != null) &&
+        value != null &&
+        value is List) {
       return Text(
         value.join(', '),
         style: const TextStyle(color: Colors.white),
@@ -77,42 +95,83 @@ class DynamicItemTable extends StatelessWidget {
           stops: [0.0, 0.3, 0.5, 0.7, 1.0],
         ),
       ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: DataTable(
-          columns: [
-            ...table.fields
-                .map((field) => DataColumn(
-                      label: Text(field.name, style: const TextStyle(color: Colors.white)),
-                    ))
-                .toList(),
-            const DataColumn(label: Text('Actions', style: TextStyle(color: Colors.white))),
-          ],
-          rows: items
-              .map(
-                (item) => DataRow(
-                  cells: [
-                    ...table.fields.map((field) => DataCell(
-                          _buildCell(field, item.fields[field.name]),
-                        )),
-                    DataCell(
-                      Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.edit, color: Colors.white),
-                            onPressed: () => onEdit(item),
+      // Scrolls both ways; on wide screens the table stretches to fill the width.
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          padding: const EdgeInsets.only(bottom: 88),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: constraints.maxWidth),
+              child: DataTable(
+                sortColumnIndex: sortField == null
+                    ? null
+                    : table.fields.indexWhere((f) => f.name == sortField),
+                sortAscending: sortAscending,
+                columns: [
+                  ...table.fields
+                      .map(
+                        (field) => DataColumn(
+                          onSort: onSort == null || field.type == 'image'
+                              ? null
+                              : (a, b) => onSort!(field.name),
+                          label: Text(
+                            field.name,
+                            style: const TextStyle(color: Colors.white),
                           ),
-                          IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.redAccent),
-                            onPressed: () => onDelete(item.id!),
+                        ),
+                      )
+                      .toList(),
+                  const DataColumn(
+                    label: Text(
+                      'Actions',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ],
+                rows: items
+                    .map(
+                      (item) => DataRow(
+                        selected: selectedIds.contains(item.id),
+                        onSelectChanged: selectionMode
+                            ? (_) => onToggleSelect?.call(item)
+                            : null,
+                        onLongPress: selectionMode
+                            ? null
+                            : () => onToggleSelect?.call(item),
+                        cells: [
+                          ...table.fields.map(
+                            (field) => DataCell(
+                              _buildCell(field, item.fields[field.name]),
+                            ),
+                          ),
+                          DataCell(
+                            Row(
+                              children: [
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.edit,
+                                    color: Colors.white,
+                                  ),
+                                  onPressed: () => onEdit(item),
+                                ),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.delete,
+                                    color: Colors.redAccent,
+                                  ),
+                                  onPressed: () => onDelete(item.id!),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
-                    ),
-                  ],
-                ),
-              )
-              .toList(),
+                    )
+                    .toList(),
+              ),
+            ),
+          ),
         ),
       ),
     );
